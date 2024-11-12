@@ -7,14 +7,11 @@
 #include <pthread.h>
 #include <time.h>
 
+#define DATA_SIZE (1024 * 1000)
 
-#define DATA_SIZE (1024 * 1000)  
+int total_bits_per_frame = 10; // 1 start bit + 8 data bits + 1 stop bit
 
-int total_bits_per_frame = 10; // 1 起始位 + 8 数据位 + 1 停止位
-
-
-
-// 配置串口的函数
+// Function to configure the serial port
 int setup_serial(const char *port, speed_t baudrate) {
     int fd = open(port, O_RDWR | O_NOCTTY | O_SYNC);
     if (fd < 0) {
@@ -34,17 +31,17 @@ int setup_serial(const char *port, speed_t baudrate) {
     cfsetospeed(&tty, baudrate);
     cfsetispeed(&tty, baudrate);
 
-    tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;  // 8 数据位
-    tty.c_iflag &= ~IGNBRK;         // 禁用 break 处理
-    tty.c_lflag = 0;                // 无信号处理
-    tty.c_oflag = 0;                // 禁用输出处理
-    tty.c_cc[VMIN]  = 1;            // 每次读取至少1个字节
-    tty.c_cc[VTIME] = 10;           // 1秒超时
+    tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;  // 8 data bits
+    tty.c_iflag &= ~IGNBRK;         // Disable break processing
+    tty.c_lflag = 0;                // No signal processing
+    tty.c_oflag = 0;                // Disable output processing
+    tty.c_cc[VMIN]  = 1;            // Read at least 1 byte each time
+    tty.c_cc[VTIME] = 10;           // 1 second timeout
 
-    tty.c_cflag |= (CLOCAL | CREAD);  // 启用接收
-    tty.c_cflag &= ~(PARENB | PARODD); // 无奇偶校验
-    tty.c_cflag &= ~CSTOPB;            // 1停止位
-    tty.c_cflag &= ~CRTSCTS;           // 无硬件流控制
+    tty.c_cflag |= (CLOCAL | CREAD);  // Enable receiver
+    tty.c_cflag &= ~(PARENB | PARODD); // No parity
+    tty.c_cflag &= ~CSTOPB;            // 1 stop bit
+    tty.c_cflag &= ~CRTSCTS;           // No hardware flow control
 
     if (tcsetattr(fd, TCSANOW, &tty) != 0) {
         perror("tcsetattr");
@@ -55,7 +52,7 @@ int setup_serial(const char *port, speed_t baudrate) {
     return fd;
 }
 
-// 发送数据的线程函数
+// Thread function for sending data
 void *send_data(void *arg) {
     int fd = *((int *)arg);
     char *data = malloc(DATA_SIZE);
@@ -69,19 +66,19 @@ void *send_data(void *arg) {
         perror("write");
     }
 
-    tcdrain(fd);  // 等待发送完成
+    tcdrain(fd);  // Wait for the transmission to complete
     clock_gettime(CLOCK_MONOTONIC, &end);
 
     double elapsed_time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
     double baud_rate = (DATA_SIZE * total_bits_per_frame) / elapsed_time;
 
-    printf("发送完成: 用时 %.2f 秒，实际发送波特率: %.2f bps\n", elapsed_time, baud_rate);
+    printf("Transmission completed: Time taken %.2f seconds, Actual transmission baud rate: %.2f bps\n", elapsed_time, baud_rate);
 
     free(data);
     return NULL;
 }
 
-// 接收数据的线程函数
+// Thread function for receiving data
 void *receive_data(void *arg) {
     int fd = *((int *)arg);
     char *received_data = malloc(DATA_SIZE);
@@ -104,13 +101,13 @@ void *receive_data(void *arg) {
     double elapsed_time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
     double baud_rate = (total_bytes_received * total_bits_per_frame) / elapsed_time;
 
-    printf("接收完成: 用时 %.2f 秒，接收字节数: %d，实际接收波特率: %.2f bps\n", elapsed_time, total_bytes_received, baud_rate);
+    printf("Reception completed: Time taken %.2f seconds, Total bytes received: %d, Actual reception baud rate: %.2f bps\n", elapsed_time, total_bytes_received, baud_rate);
 
     free(received_data);
     return NULL;
 }
 
-// 将输入的波特率转换为 termios 中的标准值
+// Converts the input baud rate to the standard value in termios
 speed_t get_baud_rate(int baudrate) {
     switch (baudrate) {
         case 9600: return B9600;
@@ -122,40 +119,40 @@ speed_t get_baud_rate(int baudrate) {
         case 460800: return B460800;
         case 921600: return B921600;
         default: 
-            fprintf(stderr, "不支持的波特率: %d\n", baudrate);
+            fprintf(stderr, "Unsupported baud rate: %d\n", baudrate);
             exit(EXIT_FAILURE);
     }
 }
 
 int main(int argc, char *argv[]) {
     if (argc != 4) {
-        fprintf(stderr, "用法: %s <串口1> <串口2> <波特率>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <serial port 1> <serial port 2> <baud rate>\n", argv[0]);
         return 1;
     }
 
-    // 获取命令行参数
+    // Get command line arguments
     const char *tx_port = argv[1];
     const char *rx_port = argv[2];
     int baudrate = atoi(argv[3]);
     speed_t baud = get_baud_rate(baudrate);
 
-    // 设置串口
+    // Set up serial ports
     int tx_fd = setup_serial(tx_port, baud);
     int rx_fd = setup_serial(rx_port, baud);
     if (tx_fd < 0 || rx_fd < 0) {
         return 1;
     }
 
-    // 创建发送和接收线程
+    // Create send and receive threads
     pthread_t send_thread, receive_thread;
     pthread_create(&send_thread, NULL, send_data, &tx_fd);
     pthread_create(&receive_thread, NULL, receive_data, &rx_fd);
 
-    // 等待线程完成
+    // Wait for threads to complete
     pthread_join(send_thread, NULL);
     pthread_join(receive_thread, NULL);
 
-    // 关闭串口
+    // Close serial ports
     close(tx_fd);
     close(rx_fd);
 
